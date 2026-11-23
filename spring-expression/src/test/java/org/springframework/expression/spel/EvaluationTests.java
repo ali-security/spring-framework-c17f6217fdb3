@@ -247,6 +247,146 @@ public class EvaluationTests extends AbstractExpressionTests {
 		}
 	}
 
+	// Use a small limit (16 bits) to verify power operator behavior in tests.
+	private static final int TEST_MAX_RESULT_BITS = 16;
+
+	private static SpelExpressionParser limitedPowerParser() {
+		return new SpelExpressionParser(new SpelParserConfiguration(SpelCompilerMode.OFF, null, false, false,
+				0, 10, 10, TEST_MAX_RESULT_BITS));
+	}
+
+	@Test
+	public void powerOperatorWithBigDecimal() {
+		StandardEvaluationContext context = new StandardEvaluationContext();
+		context.setVariable("bd", BigDecimal.valueOf(2.0));
+		Expression expr = parser.parseExpression("#bd ^ 4");
+		assertEquals(0, expr.getValue(context, BigDecimal.class).compareTo(new BigDecimal("16")));
+	}
+
+	@Test
+	public void powerOperatorWithBigDecimalUnderResultLimit() {
+		// BigDecimal.valueOf(2.0).unscaledValue().bitLength() = 5
+		// 5 * 3 = 15 bits <= TEST_MAX_RESULT_BITS (16)
+		StandardEvaluationContext context = new StandardEvaluationContext();
+		context.setVariable("bd", BigDecimal.valueOf(2.0));
+		Expression expr = limitedPowerParser().parseExpression("#bd ^ 3");
+		assertEquals(0, expr.getValue(context, BigDecimal.class).compareTo(new BigDecimal("8")));
+	}
+
+	@Test
+	public void powerOperatorWithBigDecimalExceedingResultLimit() {
+		// 5 * 4 = 20 bits > TEST_MAX_RESULT_BITS (16)
+		StandardEvaluationContext context = new StandardEvaluationContext();
+		context.setVariable("bd", BigDecimal.valueOf(2.0));
+		evaluateAndCheckError(limitedPowerParser(), context, "#bd ^ 4", BigDecimal.class,
+				SpelMessage.MAX_BIG_POWER_RESULT_EXCEEDED,
+				4,  // power operator position
+				5,  // base bit length
+				4,  // exponent
+				TEST_MAX_RESULT_BITS);
+	}
+
+	@Test
+	public void powerOperatorWithBigInteger() {
+		StandardEvaluationContext context = new StandardEvaluationContext();
+		context.setVariable("bi", BigInteger.valueOf(2));
+		Expression expr = parser.parseExpression("#bi ^ 4");
+		assertEquals(BigInteger.valueOf(16), expr.getValue(context, BigInteger.class));
+	}
+
+	@Test
+	public void powerOperatorWithBigIntegerUnderResultLimit() {
+		// BigInteger.valueOf(2).bitLength() = 2
+		// 2 * 8 = 16 bits == TEST_MAX_RESULT_BITS (16)
+		StandardEvaluationContext context = new StandardEvaluationContext();
+		context.setVariable("bi", BigInteger.valueOf(2));
+		Expression expr = limitedPowerParser().parseExpression("#bi ^ 8");
+		assertEquals(BigInteger.valueOf(256), expr.getValue(context, BigInteger.class));
+	}
+
+	@Test
+	public void powerOperatorWithBigIntegerExceedingResultLimit() {
+		// 2 * 9 = 18 bits > TEST_MAX_RESULT_BITS (16)
+		StandardEvaluationContext context = new StandardEvaluationContext();
+		context.setVariable("bi", BigInteger.valueOf(2));
+		evaluateAndCheckError(limitedPowerParser(), context, "#bi ^ 9", BigInteger.class,
+				SpelMessage.MAX_BIG_POWER_RESULT_EXCEEDED,
+				4,  // power operator position
+				2,  // base bit length
+				9,  // exponent
+				TEST_MAX_RESULT_BITS);
+	}
+
+	@Test
+	public void powerOperatorWithBigDecimalExceedingDefaultResultLimit() {
+		// 5 * 300000 = 1500000 bits > DEFAULT_MAX_BIG_POWER_BITS (1000000)
+		StandardEvaluationContext context = new StandardEvaluationContext();
+		context.setVariable("bd", BigDecimal.valueOf(2.0));
+		evaluateAndCheckError(context, "#bd ^ 300000", BigDecimal.class,
+				SpelMessage.MAX_BIG_POWER_RESULT_EXCEEDED,
+				4,  // power operator position
+				5,  // base bit length
+				300000,  // exponent
+				SpelParserConfiguration.DEFAULT_MAX_BIG_POWER_BITS);
+	}
+
+	@Test
+	public void powerOperatorWithBigIntegerExceedingDefaultResultLimit() {
+		// 2 * 1000000 = 2000000 bits > DEFAULT_MAX_BIG_POWER_BITS (1000000)
+		StandardEvaluationContext context = new StandardEvaluationContext();
+		context.setVariable("bi", BigInteger.valueOf(2));
+		evaluateAndCheckError(context, "#bi ^ 1000000", BigInteger.class,
+				SpelMessage.MAX_BIG_POWER_RESULT_EXCEEDED,
+				4,  // power operator position
+				2,  // base bit length
+				1000000,  // exponent
+				SpelParserConfiguration.DEFAULT_MAX_BIG_POWER_BITS);
+	}
+
+	@Test
+	public void powerOperatorWithHugeBigIntegerExponentIsRejectedByDefault() {
+		// 10 ^ 999999999 would require roughly 3.3 billion bits to compute
+		evaluateAndCheckError("new java.math.BigInteger('10') ^ 999999999", BigInteger.class,
+				SpelMessage.MAX_BIG_POWER_RESULT_EXCEEDED,
+				31,  // power operator position
+				4,  // base bit length
+				999999999,  // exponent
+				SpelParserConfiguration.DEFAULT_MAX_BIG_POWER_BITS);
+	}
+
+	@Test
+	public void powerOperatorWithHugeBigDecimalExponentIsRejectedByDefault() {
+		// 1.5 ^ 999999999 would require roughly 4 billion bits to compute
+		evaluateAndCheckError("new java.math.BigDecimal('1.5') ^ 999999999", BigDecimal.class,
+				SpelMessage.MAX_BIG_POWER_RESULT_EXCEEDED,
+				32,  // power operator position
+				4,  // base bit length
+				999999999,  // exponent
+				SpelParserConfiguration.DEFAULT_MAX_BIG_POWER_BITS);
+	}
+
+	@Test
+	public void maxBigPowerBitsIsConfigurableViaSpringProperty() {
+		StandardEvaluationContext context = new StandardEvaluationContext();
+		context.setVariable("bi", BigInteger.valueOf(2));
+		try {
+			SpringProperties.setProperty(SpelParserConfiguration.SPRING_EXPRESSION_MAX_BIG_POWER_BITS_PROPERTY_NAME,
+					"" + TEST_MAX_RESULT_BITS);
+
+			ExpressionParser parser = new SpelExpressionParser();
+			assertEquals(BigInteger.valueOf(256), parser.parseExpression("#bi ^ 8").getValue(context, BigInteger.class));
+			evaluateAndCheckError(parser, context, "#bi ^ 9", BigInteger.class,
+					SpelMessage.MAX_BIG_POWER_RESULT_EXCEEDED,
+					4,  // power operator position
+					2,  // base bit length
+					9,  // exponent
+					TEST_MAX_RESULT_BITS);
+		}
+		finally {
+			SpringProperties.setProperty(SpelParserConfiguration.SPRING_EXPRESSION_MAX_BIG_POWER_BITS_PROPERTY_NAME, null);
+		}
+	}
+
 	@Test
 	public void testCreateListsOnAttemptToIndexNull01() throws EvaluationException, ParseException {
 		ExpressionParser parser = new SpelExpressionParser(new SpelParserConfiguration(true, true));
