@@ -58,6 +58,40 @@ import static org.junit.Assert.*;
 public class EvaluationTests extends AbstractExpressionTests {
 
 	@Test
+	public void expressionLength() {
+		String expression = String.format("'X' + '%s'", repeat(" ", 9992));
+		assertEquals(10000, expression.length());
+		Expression expr = parser.parseExpression(expression);
+		String result = expr.getValue(eContext, String.class);
+		assertEquals(9993, result.length());
+		assertEquals("X", result.trim());
+
+		expression = String.format("'X' + '%s'", repeat(" ", 9993));
+		assertEquals(10001, expression.length());
+		evaluateAndCheckError(expression, String.class, SpelMessage.MAX_EXPRESSION_LENGTH_EXCEEDED);
+	}
+
+	@Test
+	public void maxExpressionLengthIsConfigurable() {
+		int maximumExpressionLength = 20000;
+
+		String expression = String.format("'%s'", repeat("Y", 19998));
+		assertEquals(maximumExpressionLength, expression.length());
+
+		SpelParserConfiguration configuration =
+				new SpelParserConfiguration(null, null, false, false, 0, maximumExpressionLength);
+		ExpressionParser parser = new SpelExpressionParser(configuration);
+
+		Expression expr = parser.parseExpression(expression);
+		String result = expr.getValue(String.class);
+		assertEquals(19998, result.length());
+
+		expression = String.format("'%s'", repeat("Y", 25000));
+		assertEquals(25002, expression.length());
+		evaluateAndCheckError(parser, expression, String.class, SpelMessage.MAX_EXPRESSION_LENGTH_EXCEEDED);
+	}
+
+	@Test
 	public void testCreateListsOnAttemptToIndexNull01() throws EvaluationException, ParseException {
 		ExpressionParser parser = new SpelExpressionParser(new SpelParserConfiguration(true, true));
 		Expression expression = parser.parseExpression("list[0]");
@@ -108,6 +142,15 @@ public class EvaluationTests extends AbstractExpressionTests {
 		assertNotNull(o);
 
 		o = parser.parseExpression("wibble2.bar").getValue(ctx);
+	}
+
+
+	private static String repeat(String str, int count) {
+		String result = "";
+		for (int i = 0; i < count; i++) {
+			result += str;
+		}
+		return result;
 	}
 
 
@@ -229,14 +272,6 @@ public class EvaluationTests extends AbstractExpressionTests {
 		// regex supplied at evaluation time rather than as a literal
 		eContext.setVariable("regex", pattern);
 		evaluateAndCheckError("'abc' matches #regex", Boolean.class, SpelMessage.MAX_REGEX_LENGTH_EXCEEDED);
-	}
-
-	private String repeat(String str, int count) {
-		String result = "";
-		for (int i = 0; i < count; i++) {
-			result += str;
-		}
-		return result;
 	}
 
 	// mixing operators
