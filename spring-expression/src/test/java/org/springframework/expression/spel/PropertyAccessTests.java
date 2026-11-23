@@ -16,6 +16,7 @@
 
 package org.springframework.expression.spel;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -31,6 +32,8 @@ import org.springframework.expression.TypedValue;
 import org.springframework.expression.spel.standard.SpelExpression;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
+import org.springframework.expression.spel.testresources.Person;
+import org.springframework.util.ClassUtils;
 
 import static org.junit.Assert.*;
 
@@ -65,6 +68,38 @@ public class PropertyAccessTests extends AbstractExpressionTests {
 
 		// name is ok but foobar does not exist:
 		evaluateAndCheckError("name.foobar", SpelMessage.PROPERTY_OR_FIELD_NOT_READABLE, 5);
+	}
+
+	@Test
+	public void voidReturningMethodIsNotTreatedAsPropertyGetter() throws Exception {
+		EvaluationContext context = new StandardEvaluationContext();
+		Person target = new Person("p1");
+		assertEquals("p1", parser.parseExpression("name").getValue(context, target));
+
+		try {
+			parser.parseExpression("nonexistent").getValue(context, target);
+			fail("Should have failed - property 'nonexistent' does not exist");
+		}
+		catch (SpelEvaluationException ex) {
+			assertEquals(SpelMessage.PROPERTY_OR_FIELD_NOT_READABLE, ex.getMessageCode());
+		}
+
+		Method getInvalid = ClassUtils.getMethod(Person.class, "getInvalid");
+		assertEquals(void.class, getInvalid.getReturnType());
+		try {
+			parser.parseExpression("invalid").getValue(context, target);
+			fail("Should have failed - void method getInvalid() is not a property getter");
+		}
+		catch (SpelEvaluationException ex) {
+			assertEquals(SpelMessage.PROPERTY_OR_FIELD_NOT_READABLE, ex.getMessageCode());
+		}
+		try {
+			parser.parseExpression("['invalid']").getValue(context, target);
+			fail("Should have failed - void method getInvalid() is not a property getter");
+		}
+		catch (SpelEvaluationException ex) {
+			assertEquals(SpelMessage.INDEXING_NOT_SUPPORTED_FOR_TYPE, ex.getMessageCode());
+		}
 	}
 
 	/**
