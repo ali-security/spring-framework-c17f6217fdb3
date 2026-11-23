@@ -37,6 +37,7 @@ import org.springframework.expression.MethodExecutor;
 import org.springframework.expression.MethodFilter;
 import org.springframework.expression.MethodResolver;
 import org.springframework.expression.ParseException;
+import org.springframework.expression.spel.ast.OperatorMatches;
 import org.springframework.expression.spel.standard.SpelExpression;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
@@ -427,6 +428,38 @@ public class EvaluationTests extends AbstractExpressionTests {
 		// regex supplied at evaluation time rather than as a literal
 		eContext.setVariable("regex", pattern);
 		evaluateAndCheckError("'abc' matches #regex", Boolean.class, SpelMessage.MAX_REGEX_LENGTH_EXCEEDED);
+	}
+
+	@Test
+	public void matchesWithPatternLengthThresholdForUnseenAndRepeatedEvaluation() {
+		Expression expr = parser.parseExpression("'X' matches #regex");
+
+		String pattern = String.format("^(%s|X)", repeat("12345", 199));
+		assertEquals(1000, pattern.length());
+		eContext.setVariable("regex", pattern);
+		assertTrue(expr.getValue(eContext, Boolean.class));
+		assertTrue(expr.getValue(eContext, Boolean.class));
+
+		String tooLong = pattern + "?";
+		assertEquals(1001, tooLong.length());
+		eContext.setVariable("regex", tooLong);
+		for (int i = 0; i < 3; i++) {
+			try {
+				expr.getValue(eContext, Boolean.class);
+				fail("Should have failed with message " + SpelMessage.MAX_REGEX_LENGTH_EXCEEDED);
+			}
+			catch (SpelEvaluationException ex) {
+				assertEquals(SpelMessage.MAX_REGEX_LENGTH_EXCEEDED, ex.getMessageCode());
+			}
+		}
+
+		// many distinct patterns supplied at evaluation time are still evaluated correctly
+		for (int i = 0; i < OperatorMatches.MAX_PATTERN_CACHE_SIZE * 2; i++) {
+			eContext.setVariable("regex", "X|" + i);
+			assertTrue(expr.getValue(eContext, Boolean.class));
+		}
+		eContext.setVariable("regex", pattern);
+		assertTrue(expr.getValue(eContext, Boolean.class));
 	}
 
 	// mixing operators

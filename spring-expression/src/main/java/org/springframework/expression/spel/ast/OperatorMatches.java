@@ -41,6 +41,11 @@ import org.springframework.expression.spel.support.BooleanTypedValue;
 public class OperatorMatches extends Operator {
 
 	/**
+	 * Maximum number of compiled regular expressions in the pattern cache: {@value}.
+	 */
+	public static final int MAX_PATTERN_CACHE_SIZE = 256;
+
+	/**
 	 * Maximum number of characters permitted in a regular expression.
 	 */
 	private static final int MAX_REGEX_LENGTH = 1000;
@@ -52,7 +57,7 @@ public class OperatorMatches extends Operator {
 	 * Create a new {@link OperatorMatches} instance.
 	 */
 	public OperatorMatches(int pos, SpelNodeImpl... operands) {
-		this(new ConcurrentHashMap<String, Pattern>(), pos, operands);
+		this(new BoundedPatternCache(MAX_PATTERN_CACHE_SIZE), pos, operands);
 	}
 
 	/**
@@ -88,13 +93,17 @@ public class OperatorMatches extends Operator {
 					SpelMessage.INVALID_SECOND_OPERAND_FOR_MATCHES_OPERATOR, right);
 		}
 
+		if (((String) right).length() > MAX_REGEX_LENGTH) {
+			throw new SpelEvaluationException(getStartPosition(),
+					SpelMessage.MAX_REGEX_LENGTH_EXCEEDED, MAX_REGEX_LENGTH);
+		}
+
 		state.trackOperation();
 		try {
 			String leftString = (String) left;
 			String rightString = (String) right;
 			Pattern pattern = this.patternCache.get(rightString);
 			if (pattern == null) {
-				checkRegexLength(rightString);
 				pattern = Pattern.compile(rightString);
 				this.patternCache.putIfAbsent(rightString, pattern);
 			}
@@ -106,10 +115,36 @@ public class OperatorMatches extends Operator {
 		}
 	}
 
-	private void checkRegexLength(String regex) {
-		if (regex.length() > MAX_REGEX_LENGTH) {
-			throw new SpelEvaluationException(getStartPosition(),
-					SpelMessage.MAX_REGEX_LENGTH_EXCEEDED, MAX_REGEX_LENGTH);
+
+	/**
+	 * Pattern cache for an {@link OperatorMatches} node that has not been given a
+	 * shared cache, bounded to a maximum number of compiled patterns: once full,
+	 * further patterns are still compiled and used but no longer cached.
+	 */
+	private static class BoundedPatternCache extends ConcurrentHashMap<String, Pattern> {
+
+		private static final long serialVersionUID = 1L;
+
+		private final int maxSize;
+
+		public BoundedPatternCache(int maxSize) {
+			this.maxSize = maxSize;
+		}
+
+		@Override
+		public synchronized Pattern put(String key, Pattern value) {
+			if (size() >= this.maxSize && !containsKey(key)) {
+				return null;
+			}
+			return super.put(key, value);
+		}
+
+		@Override
+		public synchronized Pattern putIfAbsent(String key, Pattern value) {
+			if (size() >= this.maxSize) {
+				return super.get(key);
+			}
+			return super.putIfAbsent(key, value);
 		}
 	}
 

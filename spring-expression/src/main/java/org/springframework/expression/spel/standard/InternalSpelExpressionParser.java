@@ -17,6 +17,8 @@
 package org.springframework.expression.spel.standard;
 
 import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Stack;
@@ -96,7 +98,8 @@ class InternalSpelExpressionParser extends TemplateAwareExpressionParser {
 	private final Stack<SpelNodeImpl> constructedNodes = new Stack<SpelNodeImpl>();
 
 	// Shared cache for compiled regex patterns
-	private final ConcurrentMap<String, Pattern> patternCache = new ConcurrentHashMap<String, Pattern>();
+	private final ConcurrentMap<String, Pattern> patternCache =
+			new PatternCache(OperatorMatches.MAX_PATTERN_CACHE_SIZE);
 
 	// The expression being parsed
 	private String expressionString;
@@ -1038,6 +1041,82 @@ class InternalSpelExpressionParser extends TemplateAwareExpressionParser {
 
 	private int toPos(int start,int end) {
 		return (start<<16) + end;
+	}
+
+
+	/**
+	 * Shared cache for compiled regex patterns, bounded to a maximum number of
+	 * entries: once full, the least recently used pattern is evicted.
+	 */
+	private static class PatternCache extends ConcurrentHashMap<String, Pattern> {
+
+		private static final long serialVersionUID = 1L;
+
+		private final int maxSize;
+
+		// Access-ordered keys (least recently used first), also guarding all modifications
+		private final LinkedHashMap<String, Boolean> accessOrder =
+				new LinkedHashMap<String, Boolean>(16, 0.75f, true);
+
+		public PatternCache(int maxSize) {
+			this.maxSize = maxSize;
+		}
+
+		@Override
+		public Pattern get(Object key) {
+			Pattern pattern = super.get(key);
+			if (pattern != null) {
+				synchronized (this.accessOrder) {
+					this.accessOrder.get(key);
+				}
+			}
+			return pattern;
+		}
+
+		@Override
+		public Pattern put(String key, Pattern value) {
+			synchronized (this.accessOrder) {
+				Pattern previous = super.put(key, value);
+				this.accessOrder.put(key, Boolean.TRUE);
+				evictIfNecessary();
+				return previous;
+			}
+		}
+
+		@Override
+		public Pattern putIfAbsent(String key, Pattern value) {
+			synchronized (this.accessOrder) {
+				Pattern existing = super.putIfAbsent(key, value);
+				this.accessOrder.put(key, Boolean.TRUE);
+				evictIfNecessary();
+				return existing;
+			}
+		}
+
+		@Override
+		public Pattern remove(Object key) {
+			synchronized (this.accessOrder) {
+				this.accessOrder.remove(key);
+				return super.remove(key);
+			}
+		}
+
+		@Override
+		public void clear() {
+			synchronized (this.accessOrder) {
+				this.accessOrder.clear();
+				super.clear();
+			}
+		}
+
+		private void evictIfNecessary() {
+			Iterator<String> keys = this.accessOrder.keySet().iterator();
+			while (this.accessOrder.size() > this.maxSize && keys.hasNext()) {
+				String eldest = keys.next();
+				keys.remove();
+				super.remove(eldest);
+			}
+		}
 	}
 
 }
